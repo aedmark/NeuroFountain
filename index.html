@@ -168,18 +168,26 @@
         /* Screenplay Formatting (CSS Implementation of Fountain Rules) */
         .screenplay-font {
             font-family: var(--font-screenplay);
-            font-size: 12pt;
+            font-size: 12pt; /* Standard 12pt Courier */
             line-height: 1.1;
-            max-width: 800px;
+            max-width: 60ch; /* 6 inches of usable text area at 10-pitch */
             margin: 0 auto;
+            text-align: left; /* Enforce rigid left alignment */
         }
 
         .script-scene-heading { text-transform: uppercase; font-weight: 700; margin-top: 1.5rem; margin-bottom: 1rem; }
         .script-action { margin-bottom: 1rem; width: 100%; }
-        .script-character { text-transform: uppercase; margin-left: 35%; margin-top: 1rem; margin-bottom: 0; }
-        .script-parenthetical { margin-left: 28%; width: 44%; margin-bottom: 0; }
-        .script-dialogue { margin-left: 20%; width: 60%; margin-bottom: 1rem; }
-        .script-transition { text-transform: uppercase; text-align: right; margin-bottom: 1rem; width: 95%; }
+        .script-character { text-transform: uppercase; margin-left: 22ch; margin-top: 1rem; margin-bottom: 0; }
+        .script-parenthetical { margin-left: 16ch; max-width: 15ch; margin-bottom: 0; }
+        .script-dialogue { margin-left: 10ch; max-width: 35ch; margin-bottom: 1rem; }
+
+        /* The nowrap ensures CUT TO: does not collapse under responsive pressure */
+        .script-transition {
+            text-transform: uppercase;
+            margin-left: 40ch;
+            margin-bottom: 1rem;
+            white-space: nowrap;
+        }
         .script-spacer { height: 1rem; }
 
         /* Custom Scrollbars */
@@ -189,6 +197,56 @@
         ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
         .pane-canvas ::-webkit-scrollbar-thumb { background: #cbd5e1; }
         .pane-canvas ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* --- MODALS & UI --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 17, 21, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: var(--bg-void);
+            border: 1px solid var(--border-void);
+            border-radius: 0.5rem;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .modal-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-void);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h2 { margin: 0; font-size: 1rem; color: #f8fafc; }
+        .modal-close { background: transparent; color: var(--text-void-muted); border: none; cursor: pointer; font-size: 1.25rem; }
+        .modal-close:hover { color: #f8fafc; }
+        .modal-body {
+            padding: 1rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .script-item {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-void);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .script-item:hover { background: var(--border-void); }
+        .script-item:last-child { border-bottom: none; }
+        .script-title { font-weight: 600; color: #f8fafc; margin-bottom: 0.25rem; }
+        .script-preview { font-size: 0.75rem; color: var(--text-void-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .button-group { display: flex; gap: 0.5rem; }
     </style>
 </head>
 <body>
@@ -200,7 +258,12 @@
             <h1>The Void</h1>
             <p>Just type. We handle the structure.</p>
         </div>
-        <button id="copyBtn" class="btn">Copy Raw Text</button>
+        <div class="button-group">
+            <button id="libraryBtn" class="btn">Library</button>
+            <button id="saveBtn" class="btn">Save</button>
+            <button id="exportBtn" class="btn">Export</button>
+            <button id="copyBtn" class="btn">Copy</button>
+        </div>
     </div>
     <textarea id="editor" placeholder="FADE IN:&#10;&#10;INT. COFFEE SHOP - DAY&#10;&#10;The cafe is entirely empty.&#10;&#10;JOHN&#10;(nervous)&#10;I just wanted a program that let me type without thinking.&#10;&#10;THE ARTISAN&#10;It is done.&#10;&#10;CUT TO:&#10;&#10;EXT. THE VOID - CONTINUOUS"></textarea>
 </div>
@@ -219,10 +282,161 @@
     </div>
 </div>
 
+<!-- Library Modal -->
+<div id="library-modal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Your Scripts</h2>
+            <button id="modal-close" class="modal-close">&times;</button>
+        </div>
+        <div id="library-list" class="modal-body">
+            <!-- Scripts injected here -->
+        </div>
+    </div>
+</div>
+
 <script>
     const editor = document.getElementById('editor');
     const renderTarget = document.getElementById('render-target');
     const copyBtn = document.getElementById('copyBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const libraryBtn = document.getElementById('libraryBtn');
+    const libraryModal = document.getElementById('library-modal');
+    const modalClose = document.getElementById('modal-close');
+    const libraryList = document.getElementById('library-list');
+
+    let currentScriptId = crypto.randomUUID();
+
+    // --- Local Storage Persistence ---
+    function getScripts() {
+        try {
+            const data = localStorage.getItem('frictionless_scripts');
+            return data ? JSON.parse(data) : {};
+        } catch (e) {
+            console.error("Failed to parse local storage", e);
+            return {};
+        }
+    }
+
+    function saveScript(isAuto = false) {
+        const rawText = editor.value;
+        if (!rawText.trim()) return;
+
+        // Intelligently extract the first line as a title
+        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const title = lines.length > 0 ? lines[0].substring(0, 40) : "Untitled Script";
+
+        const originalText = saveBtn.innerText;
+        if (!isAuto) {
+            saveBtn.innerText = "Saving...";
+        }
+
+        try {
+            const scripts = getScripts();
+            scripts[currentScriptId] = {
+                id: currentScriptId,
+                title: title,
+                content: rawText,
+                updatedAt: Date.now()
+            };
+            localStorage.setItem('frictionless_scripts', JSON.stringify(scripts));
+
+            if (!isAuto) {
+                saveBtn.innerText = "Saved!";
+                saveBtn.classList.add('success');
+            }
+        } catch (e) {
+            console.error("Save error:", e);
+            if (!isAuto) saveBtn.innerText = "Error";
+        }
+
+        if (!isAuto) {
+            setTimeout(() => {
+                saveBtn.innerText = originalText;
+                saveBtn.classList.remove('success');
+            }, 2000);
+        }
+    }
+
+    function loadLibrary() {
+        libraryList.innerHTML = '';
+
+        try {
+            const scriptsObj = getScripts();
+            const scripts = Object.values(scriptsObj);
+
+            if (scripts.length === 0) {
+                libraryList.innerHTML = '<div class="script-item"><div class="script-preview">No saved scripts found.</div></div>';
+                return;
+            }
+
+            // Sort newest first
+            scripts.sort((a, b) => b.updatedAt - a.updatedAt);
+
+            scripts.forEach(script => {
+                const item = document.createElement('div');
+                item.className = 'script-item';
+
+                // Basic HTML escaping for safety
+                const safeTitle = script.title.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                const safePreview = script.content.substring(0, 60).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+                item.innerHTML = `
+                    <div class="script-title">${safeTitle}</div>
+                    <div class="script-preview">${safePreview}...</div>
+                `;
+                item.addEventListener('click', () => {
+                    currentScriptId = script.id;
+                    editor.value = script.content;
+                    renderTarget.innerHTML = parseScript(script.content);
+                    libraryModal.classList.remove('active');
+                });
+                libraryList.appendChild(item);
+            });
+        } catch (e) {
+            console.error("Load error:", e);
+            libraryList.innerHTML = '<div class="script-item"><div class="script-preview">Error loading scripts.</div></div>';
+        }
+    }
+
+    // --- Event Listeners ---
+    saveBtn.addEventListener('click', () => saveScript(false));
+
+    libraryBtn.addEventListener('click', () => {
+        libraryModal.classList.add('active');
+        loadLibrary();
+    });
+
+    modalClose.addEventListener('click', () => {
+        libraryModal.classList.remove('active');
+    });
+
+    libraryModal.addEventListener('click', (e) => {
+        if (e.target === libraryModal) libraryModal.classList.remove('active');
+    });
+
+    // Generate physical text file export dynamically
+    exportBtn.addEventListener('click', () => {
+        const rawText = editor.value;
+        if (!rawText.trim()) return;
+
+        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const title = lines.length > 0 ? lines[0].substring(0, 40).replace(/[^a-z0-9]/gi, '_').toLowerCase() : "untitled_script";
+
+        const blob = new Blob([rawText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title}.txt`;
+
+        document.body.appendChild(a);
+        a.click();
+
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
 
     // The Linguist's Parsing Engine
     function parseScript(text) {
@@ -298,18 +512,26 @@
         );
     }
 
-    // Event Listeners
+    let autoSaveTimer;
+
     editor.addEventListener('input', () => {
-        const rawText = editor.value;
+        const rawText = editor.value || editor.getAttribute('placeholder');
         renderTarget.innerHTML = parseScript(rawText);
+
+        // Quietly auto-save after 2 seconds of typing inactivity
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(() => {
+            if (editor.value.trim()) {
+                saveScript(true);
+            }
+        }, 2000);
     });
 
     // Initialize with placeholder text on load
     window.addEventListener('DOMContentLoaded', () => {
-        // Check if placeholder is active, if so render it, otherwise render empty
-        if(editor.value) {
-            renderTarget.innerHTML = parseScript(editor.value);
-        }
+        // Authenticate call removed. The system is entirely local.
+        const initialText = editor.value || editor.getAttribute('placeholder');
+        renderTarget.innerHTML = parseScript(initialText);
     });
 
     // Copy functionality
